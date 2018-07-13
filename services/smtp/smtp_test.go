@@ -1,6 +1,7 @@
 package smtp
 
 import (
+	"errors"
 	"fmt"
 	"net"
 	"net/smtp"
@@ -30,7 +31,17 @@ func TestSMTP(t *testing.T) {
 	defer server.Close()
 
 	//Create Servicer
+<<<<<<< HEAD
 	s := SMTP().(*Service)
+=======
+	s := SMTP().(*SMTPService)
+	s.srv.Users = [][]string{
+		[]string{
+			"john",
+			"bye",
+		},
+	}
+>>>>>>> Add AUTH command to smtp service
 
 	// Create channel
 	dc, _ := pushers.Dummy()
@@ -60,6 +71,11 @@ func TestSMTP(t *testing.T) {
 	err = smtpClient.StartTLS(conf)
 	if err != nil {
 		t.Error(err)
+	}
+
+	auth := smtp.PlainAuth("", "john", "bye", hostname)
+	if err = smtpClient.Auth(auth); err != nil {
+		t.Fatal(err)
 	}
 
 	// Set the sender and recipient first
@@ -96,4 +112,104 @@ func TestSMTP(t *testing.T) {
 	*/
 	// Check if data is received.
 	// with file channel?
+}
+
+func TestAuthLogin(t *testing.T) {
+	//Create a pipe
+	client, server := net.Pipe()
+	defer client.Close()
+	defer server.Close()
+
+	//Create Servicer
+	s := SMTP().(*SMTPService)
+	s.srv.Users = [][]string{
+		[]string{
+			"john",
+			"bye",
+		},
+	}
+
+	// Create channel
+	dc, _ := pushers.Dummy()
+	s.SetChannel(dc)
+
+	// Handle the connection
+	go func(conn net.Conn) {
+		if err := s.Handle(nil, conn); err != nil {
+			t.Fatal(err)
+		}
+	}(server)
+
+	//Create smtp client
+	smtpClient, err := smtp.NewClient(client, hostname)
+	if err != nil {
+		t.Error(err)
+	}
+
+	auth := &loginAuth{"john", "bye"}
+
+	if err := smtpClient.Auth(auth); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestCramMD5(t *testing.T) {
+	//Create a pipe
+	client, server := net.Pipe()
+	defer client.Close()
+	defer server.Close()
+
+	//Create Servicer
+	s := SMTP().(*SMTPService)
+	s.srv.Secrets = [][]string{
+		[]string{
+			"john",
+			"secret key",
+		},
+	}
+
+	// Create channel
+	dc, _ := pushers.Dummy()
+	s.SetChannel(dc)
+
+	// Handle the connection
+	go func(conn net.Conn) {
+		if err := s.Handle(nil, conn); err != nil {
+			t.Fatal(err)
+		}
+	}(server)
+
+	//Create smtp client
+	smtpClient, err := smtp.NewClient(client, hostname)
+	if err != nil {
+		t.Error(err)
+	}
+
+	auth := smtp.CRAMMD5Auth("john", "secret key")
+
+	if err := smtpClient.Auth(auth); err != nil {
+		t.Fatal(err)
+	}
+}
+
+type loginAuth struct {
+	username, password string
+}
+
+func (a *loginAuth) Start(server *smtp.ServerInfo) (string, []byte, error) {
+	return "LOGIN", []byte{}, nil
+}
+
+func (a *loginAuth) Next(fromServer []byte, more bool) ([]byte, error) {
+	if more {
+		switch string(fromServer) {
+		case "Username:":
+			return []byte(a.username), nil
+		case "Password:":
+			return []byte(a.password), nil
+		default:
+			return nil, errors.New("Unkown question")
+		}
+	}
+	return nil, nil
 }

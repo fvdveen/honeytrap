@@ -73,7 +73,9 @@ func (mux *ServeMux) Serve(msg Message) error {
 }
 
 type Server struct {
-	Banner string
+	Banner  string
+	Users   [][]string
+	Secrets [][]string
 
 	Handler Handler
 

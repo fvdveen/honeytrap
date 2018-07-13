@@ -32,8 +32,11 @@ package smtp
 
 import (
 	"bytes"
+	"crypto/hmac"
+	"crypto/md5"
 	"crypto/sha1"
 	"crypto/tls"
+	"encoding/base64"
 	"fmt"
 	"io"
 	"net"
@@ -41,6 +44,7 @@ import (
 	"net/textproto"
 	"strconv"
 	"strings"
+	"time"
 )
 
 const loopTreshold = 100
@@ -53,6 +57,7 @@ type conn struct {
 	server *Server
 	rcv    chan string
 	i      int
+	authed bool
 }
 
 func (c *conn) newMessage() *Message {
@@ -112,6 +117,183 @@ func outOfSequenceState() stateFn {
 	return func(c *conn) stateFn {
 		c.PrintfLine("503 command out of sequence")
 		return nil
+	}
+}
+
+func authPlainState(msg string) stateFn {
+	if msg == "" {
+		return func(c *conn) stateFn {
+			c.PrintfLine("334 ")
+			msg, err := c.ReadLine()
+			if err != nil {
+				log.Error("[authPlainState] error: %s", err.Error())
+				return authErrState
+			}
+			return authPlainState(msg)
+		}
+	}
+
+	upb, err := base64.StdEncoding.DecodeString(msg)
+	if err != nil {
+		log.Error("[authPlainState] error: %s", err.Error())
+		return authErrState
+	}
+
+	var up []string
+	for _, bs := range bytes.Split(upb, []byte{0}) {
+		up = append(up, string(bs))
+	}
+	if len(up) < 3 {
+		return authErrState
+	}
+
+	return func(c *conn) stateFn {
+		a := func() bool {
+			for _, u := range c.server.Users {
+				if len(u) < 2 {
+					continue
+				}
+				if up[1] == u[0] && up[2] == u[1] {
+					return true
+				}
+			}
+
+			return false
+		}()
+		if !a {
+			return authFailedState
+		}
+		return authSuccesState
+	}
+}
+
+func authLoginState(msg string) stateFn {
+	if msg == "" {
+		return func(c *conn) stateFn {
+			c.PrintfLine("334 VXNlcm5hbWU6")
+			u64, err := c.ReadLine()
+			if err != nil {
+				return authErrState
+			}
+			return authLoginState(u64)
+		}
+	}
+	return func(c *conn) stateFn {
+		u, err := base64.StdEncoding.DecodeString(msg)
+		if err != nil {
+			return authErrState
+		}
+
+		c.PrintfLine("334 UGFzc3dvcmQ6")
+		p64, err := c.ReadLine()
+		if err != nil {
+			return authErrState
+		}
+
+		p, err := base64.StdEncoding.DecodeString(p64)
+		if err != nil {
+			return authErrState
+		}
+
+		a := func() bool {
+			for _, user := range c.server.Users {
+				if len(u) < 2 {
+					continue
+				}
+				if string(u) == user[0] && string(p) == user[1] {
+					return true
+				}
+			}
+
+			return false
+		}()
+		if !a {
+			return authFailedState
+		}
+		return authSuccesState
+	}
+}
+
+func authCramMD5State() stateFn {
+	return func(c *conn) stateFn {
+		challenge := md5.New()
+		challenge.Write([]byte(time.Now().Format(time.RFC3339)))
+
+		cMsg := base64.StdEncoding.EncodeToString(challenge.Sum(nil))
+		c.PrintfLine("334 %s", cMsg)
+
+		line, err := c.ReadLine()
+		if err != nil {
+			return authErrState
+		}
+
+		msg, err := base64.StdEncoding.DecodeString(line)
+		if err != nil {
+			return authErrState
+		}
+
+		parts := bytes.Split(msg, []byte(" "))
+		if len(parts) < 2 {
+			return authErrState
+		}
+
+		for _, secret := range c.server.Secrets {
+			if len(secret) < 2 {
+				continue
+			}
+			if secret[0] == string(parts[0]) {
+				h := hmac.New(md5.New, []byte(secret[1]))
+				s := make([]byte, 0, h.Size())
+				h.Write(challenge.Sum(s))
+				if fmt.Sprintf("%x", h.Sum(nil)) == string(parts[1]) {
+					return authSuccesState
+				}
+			}
+		}
+
+		return authFailedState
+	}
+}
+
+func authErrState(c *conn) stateFn {
+	c.PrintfLine("454 4.7.0 Temporary authentication failure")
+	return loopState
+}
+
+func authFailedState(c *conn) stateFn {
+	c.PrintfLine("535 5.7.8 Authentication credentials invalid")
+	c.authed = false
+	return loopState
+
+}
+
+func authSuccesState(c *conn) stateFn {
+	c.PrintfLine("235 2.7.0 Authentication Succeeded")
+	c.authed = true
+	return loopState
+
+}
+
+func authState(msg string) stateFn {
+	ps := strings.Split(msg, " ")
+	if len(ps) < 2 {
+		return unrecognizedState
+	}
+	switch strings.ToUpper(ps[1]) {
+	case "PLAIN":
+		if len(ps) < 3 {
+			return authPlainState("")
+		}
+		return authPlainState(ps[2])
+	case "LOGIN":
+		if len(ps) < 3 {
+			return authLoginState("")
+		}
+		return authLoginState(ps[2])
+	case "CRAM-MD5":
+		return authCramMD5State()
+	default:
+		return unrecognizedState
 	}
 }
 
@@ -228,6 +410,11 @@ func loopState(c *conn) stateFn {
 		}
 		log.Error("TLS not available")
 		return nil
+	} else if isCommand(line, "AUTH") {
+		if c.authed {
+			return outOfSequenceState()
+		}
+		return authState(line)
 	} else if isCommand(line, "RSET") {
 		c.msg = c.newMessage()
 		c.PrintfLine("250 Ok")
@@ -286,6 +473,7 @@ func helloState(c *conn) stateFn {
 		c.PrintfLine("250-ENHANCEDSTATUSCODES")
 		c.PrintfLine("250-PIPELINING")
 		c.PrintfLine("250-CHUNKING")
+		c.PrintfLine("250-AUTH PLAIN LOGIN CRAM-MD5")
 		c.PrintfLine("250 SMTPUTF8")
 		return loopState
 	} else {

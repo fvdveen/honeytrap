@@ -50,7 +50,9 @@ func SMTP(options ...services.ServicerFunc) services.Servicer {
 
 	s := &Service{
 		Config: Config{
-			Banner: "SMTPd",
+			Banner:  "SMTPd",
+			Users:   [][]string{},
+			Secrets: [][]string{},
 			srv: &Server{
 				tlsConfig: nil,
 			},
@@ -78,6 +80,8 @@ func SMTP(options ...services.ServicerFunc) services.Servicer {
 	}
 
 	s.srv.Banner = s.Banner
+	s.srv.Users = s.Users
+	s.srv.Secrets = s.Secrets
 
 	handler := HandleFunc(func(msg Message) error {
 		s.receiveChan <- msg
@@ -91,6 +95,9 @@ func SMTP(options ...services.ServicerFunc) services.Servicer {
 
 type Config struct {
 	Banner string `toml:"banner"`
+
+	Users   [][]string `toml:"users"`
+	Secrets [][]string `toml:"secrets"`
 
 	srv *Server
 
