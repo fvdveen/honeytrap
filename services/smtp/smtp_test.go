@@ -21,7 +21,14 @@ const (
 
 func TestMain(m *testing.M) {
 	storage.SetDataDir("")
-	os.Exit(m.Run())
+	c := m.Run()
+	if err := storage.Close(); err != nil {
+		log.Fatal(err)
+	}
+	if err := os.RemoveAll("badger.db"); err != nil {
+		log.Fatal(err)
+	}
+	os.Exit(c)
 }
 
 func TestSMTP(t *testing.T) {
