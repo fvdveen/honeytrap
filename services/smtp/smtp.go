@@ -40,6 +40,18 @@ import (
 	logging "github.com/op/go-logging"
 )
 
+/*
+[service.smtp]
+type="smtp"
+port="tcp/25"
+users=[
+	["user1", "password"],
+]
+secrets=[
+	["user2", "secret"]
+]
+*/
+
 var (
 	_   = services.Register("smtp", SMTP)
 	log = logging.MustGetLogger("services/smtp")
