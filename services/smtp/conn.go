@@ -113,6 +113,13 @@ func errorState(format string, args ...interface{}) stateFn {
 	}
 }
 
+func invalidArgumentState(format string, args ...interface{}) stateFn {
+	return func(c *conn) stateFn {
+		c.PrintfLine("501 %s", fmt.Sprintf(format, args...))
+		return loopState
+	}
+}
+
 func outOfSequenceState() stateFn {
 	return func(c *conn) stateFn {
 		c.PrintfLine("503 command out of sequence")
@@ -391,6 +398,9 @@ func loopState(c *conn) stateFn {
 	}
 
 	if isCommand(line, "MAIL FROM") {
+		if len(line) < 10 {
+			return invalidArgumentState("missing address")
+		}
 		c.msg.From, _ = mail.ParseAddress(line[10:])
 		c.PrintfLine("250 Ok")
 		return mailFromState
