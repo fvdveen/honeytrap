@@ -31,17 +31,13 @@ func TestSMTP(t *testing.T) {
 	defer server.Close()
 
 	//Create Servicer
-<<<<<<< HEAD
 	s := SMTP().(*Service)
-=======
-	s := SMTP().(*SMTPService)
 	s.srv.Users = [][]string{
 		[]string{
 			"john",
 			"bye",
 		},
 	}
->>>>>>> Add AUTH command to smtp service
 
 	// Create channel
 	dc, _ := pushers.Dummy()
@@ -121,7 +117,7 @@ func TestAuthLogin(t *testing.T) {
 	defer server.Close()
 
 	//Create Servicer
-	s := SMTP().(*SMTPService)
+	s := SMTP().(*Service)
 	s.srv.Users = [][]string{
 		[]string{
 			"john",
@@ -160,7 +156,7 @@ func TestCramMD5(t *testing.T) {
 	defer server.Close()
 
 	//Create Servicer
-	s := SMTP().(*SMTPService)
+	s := SMTP().(*Service)
 	s.srv.Secrets = [][]string{
 		[]string{
 			"john",
